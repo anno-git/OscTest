@@ -1,0 +1,8 @@
+
+.DS_Store
+bin/OscTestDebug.app/*
+OscTest.xcodeproj/*
+openFrameworks-Info.plist
+Project.xcconfig
+of.entitlements
+Makefile
