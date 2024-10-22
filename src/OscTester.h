@@ -3,6 +3,7 @@
 #include "ofxGlobalContext.h"
 #include "ofxImGui.h"
 #include "ofxPubSubOsc.h"
+#include <iostream>
 
 class OscTester : public ofxGlobalContext::Context{
 
@@ -25,6 +26,7 @@ public:
     vector<string> logs;
     const int LOG_SIZE = 15;
     float received_time = 0;
+    bool bundle = true;
 
     void setup()
     {
@@ -127,14 +129,20 @@ public:
             ofJson json;
             json << f;
             messages.clear();
+            bundle = json["bundle"];
             for(int i = 0; i < json["messages"].size(); i++)
             {
                 messages.emplace_back(ofPtr<Message>(new Message));
+                messages.back()->host = "";
                 for(int j = 0; j < 4; j++)
                 {
                     messages.back()->ip_list[j] = json["messages"][i]["ip_list"][j];
+                    if(j != 0)
+                    {
+                        messages.back()->host += ".";
+                    }
+                    messages.back()->host += ofToString(json["messages"][i]["ip_list"][j]);
                 }
-                
                 messages.back()->port = json["messages"][i]["port"];
                 messages.back()->send_receive = json["messages"][i]["send_receive"];
                 messages.back()->subscribe = json["messages"][i]["subscribe"];
@@ -211,6 +219,7 @@ public:
     void save(std::filesystem::path filePath)
     {
         ofJson json;
+        json["bundle"] = bundle;
         for(int i = 0; i < messages.size(); i++)
         {
             for(int j = 0; j < 4; j++)
@@ -328,6 +337,9 @@ public:
         {
             saved_filename = set_str;
         }
+        if(ImGui::Checkbox("bundle", &bundle))
+        {
+        }
         if(ImGui::Button("save"))
         {
             save(saved_filename);
@@ -372,7 +384,7 @@ public:
                         ofxUnsubscribeOsc(message->port, message->address);
                     }
                 }
-                message->message_str = message->address;
+//                message->message_str = message->address;
                 if(message->subscribe)
                 {
 #if (IMGUI_VERSION_NUM > 18315)
@@ -393,10 +405,56 @@ public:
                 ImGui::DragInt(name.c_str(), &message->port, 1, 0, 65535);
                 
                 name = "address[" + ofToString(i) + "]";
-                char* address_c = const_cast<char*>(message->address.c_str());
+                char* address_c = const_cast<char*>(message->message_str.c_str());
                 if(ImGui::InputText(name.c_str(), address_c, 100))
                 {
-                    message->address = address_c;
+                    vector <string> tokens;
+                         
+                    // stringstream class check1
+                    stringstream check1(address_c);
+                     
+                    string intermediate;
+                     
+                    // Tokenizing w.r.t. space ' '
+                    while(getline(check1, intermediate, ' '))
+                    {
+                        tokens.push_back(intermediate);
+                    }
+                    if(tokens.size() > 0)
+                    {
+                        tokens[0].find("/") != string::npos;
+                        message->address = tokens[0];
+                    }
+                    
+                    int argsize = message->args.size();
+                    int selected_typessize = message->selected_types.size();
+                    if(argsize > 0 || selected_typessize > 0)
+                    {
+                        message->args.clear();
+                        message->selected_types.clear();
+                    }
+                    
+                    for(int j = 1; j < tokens.size(); j++)
+                    {
+                        message->selected_types.push_back("arg_type[" + ofToString(i) + "][" + ofToString(j - 1) + "]");
+                        string t = tokens[j];
+                        try {
+                            float f = stof(t);
+                            message->args.emplace_back(ofPtr<ofxOscArgFloat>(new ofxOscArgFloat(f)));
+                            message->selected_types.back() += ":float";
+                        }
+                        catch (...) {
+                            try {
+                                int num = stoi(t);
+                                message->args.emplace_back(ofPtr<ofxOscArgInt32>(new ofxOscArgInt32(num)));
+                                message->selected_types.back() += ":int32";
+                            }
+                            catch (...) {
+                                message->args.emplace_back(ofPtr<ofxOscArgString>(new ofxOscArgString(t)));
+                                message->selected_types.back() += ":string";
+                            }
+                        }
+                    }
                 }
 
                 
@@ -425,6 +483,7 @@ public:
                 if(!message->send_receive)
                 {
                     int j = 0;
+                    message->message_str = message->address;
                     for(auto jt = message->args.begin(); jt != message->args.end();)
                     {
                         ImGui::Spacing();
@@ -550,7 +609,6 @@ public:
                         }
                         
                         name = "arg_value[" + ofToString(i) + "][" + ofToString(j) + "]";
-                        
                         switch(arg->getType())
                         {
                             case OFXOSC_TYPE_INT32:
@@ -660,6 +718,7 @@ public:
                             case OFXOSC_TYPE_BLOB:
                             {
                                 ofxOscArgBlob* a = dynamic_cast<ofxOscArgBlob*>(arg.get());
+                                message->message_str += " " + ofToString(a->get());
                                 if(ImGui::Button(name.c_str()))
                                 {
                                     ofFileDialogResult r = ofSystemLoadDialog("Select a file for arg[" + ofToString(j) + "]");
@@ -681,11 +740,11 @@ public:
                                 
                                 ofxOscArgRgbaColor* a = dynamic_cast<ofxOscArgRgbaColor*>(arg.get());
                                 uint32_t r = a->get();
+                                message->message_str += " " + ofToString(r);
                                 color[0] = (r >> 24 & 0xFF) / 255.;
                                 color[1] = (r >> 16 & 0xFF) / 255.;
                                 color[2] = (r >> 8 & 0xFF) / 255.;
                                 color[3] = (r & 0xFF) / 255.;
-                                message->message_str += " " + ofToString(r);
                                 if(ImGui::ColorPicker4(name.c_str(), &color[0]))
                                 {
                                     r = (int)(color[0] * 255) << 24 | (int)(color[1] * 255) << 16 | (int)(color[2] * 255) << 8 | (int)(color[3] * 255);
@@ -728,134 +787,135 @@ public:
                     ImGui::EndDisabled();
                 }
 #endif
-                ImGui::Spacing();
-                if(message->send_receive)
-                {
-                    name = "receive osc[" + ofToString(i) + "]";
-                    if(ImGui::Checkbox(name.c_str(), &message->subscribe))
-                    {
-                        if(message->subscribe)
-                        {
-                            startSubscribe(message);
-                        }
-                        else
-                        {
-                            ofxUnsubscribeOsc(message->port, message->address);
-                        }
-                    }
-                }
-                else
-                {
-                    name = "send osc[" + ofToString(i) + "]";
-                    if(ImGui::Button(name.c_str()))
-                    {
-                        string sent_msg = "sent to host: " + ofToString(message->host) + " on port: " + ofToString(message->port) + " message: " + ofToString(message->address);
-                        ofxOscMessage m;
-                        m.setAddress(message->address);
-                        for(auto& arg: message->args)
-                        {
-                            ofxOscArgType t = arg->getType();
-                            switch(t)
-                            {
-                                case OFXOSC_TYPE_INT32:
-                                {
-                                    int32_t msg = dynamic_cast<ofxOscArgInt32*>(arg.get())->get();
-                                    m.addInt32Arg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_INT64:
-                                {
-                                    int64_t msg = dynamic_cast<ofxOscArgInt64*>(arg.get())->get();
-                                    m.addInt64Arg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_FLOAT:
-                                {
-                                    float msg = dynamic_cast<ofxOscArgFloat*>(arg.get())->get();
-                                    m.addFloatArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_DOUBLE:
-                                {
-                                    double msg = dynamic_cast<ofxOscArgDouble*>(arg.get())->get();
-                                    m.addDoubleArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_TRUE:
-                                case OFXOSC_TYPE_FALSE:
-                                case OFXOSC_TYPE_TRIGGER:
-                                {
-                                    bool msg = dynamic_cast<ofxOscArgBool*>(arg.get())->get();
-                                    m.addBoolArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_STRING:
-                                {
-                                    string msg = dynamic_cast<ofxOscArgString*>(arg.get())->get();
-                                    m.addStringArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_CHAR:
-                                {
-                                    char msg = dynamic_cast<ofxOscArgChar*>(arg.get())->get();
-                                    m.addCharArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_RGBA_COLOR:
-                                {
-                                    uint32_t msg = dynamic_cast<ofxOscArgRgbaColor*>(arg.get())->get();
-                                    m.addRgbaColorArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_TIMETAG:
-                                {
-                                    uint64_t msg = dynamic_cast<ofxOscArgTimetag*>(arg.get())->get();
-                                    m.addTimetagArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_MIDI_MESSAGE:
-                                {
-                                    uint32_t msg = dynamic_cast<ofxOscArgMidiMessage*>(arg.get())->get();
-                                    m.addMidiMessageArg(msg);
-                                    sent_msg += " " + ofToString(msg);
-                                    break;
-                                }
-                                case OFXOSC_TYPE_BLOB:
-                                {
-                                    ofBuffer msg = dynamic_cast<ofxOscArgBlob*>(arg.get())->get();
-                                    m.addBlobArg(msg);
-                                    sent_msg += " [blob]";
-                                    break;
-                                }
-                                default:
-                                    ofLogNotice("OscTester") << "unknown arg type.";
-                                    break;
-                            }
-                        }
-                        ofxOscSender sender;
-                        sender.setup(message->host, message->port);
-                        sender.sendMessage(m);
-                        message->sent_time = ofGetElapsedTimef();
-                        
-                        sent_msg += " on " + ofToString(message->sent_time) + " ms";
-                        logs.push_back(sent_msg);
-                        if(logs.size() > LOG_SIZE)
-                        {
-                            logs.erase(logs.begin());
-                        }
-                    }
-                }
 
                 ImGui::TreePop();
+            }
+            ImGui::Spacing();
+            if(message->send_receive)
+            {
+                name = "receive osc[" + ofToString(i) + "]";
+                if(ImGui::Checkbox(name.c_str(), &message->subscribe))
+                {
+                    if(message->subscribe)
+                    {
+                        startSubscribe(message);
+                    }
+                    else
+                    {
+                        ofxUnsubscribeOsc(message->port, message->address);
+                    }
+                }
+            }
+            else
+            {
+                name = "send osc[" + ofToString(i) + "]";
+                if(ImGui::Button(name.c_str()))
+                {
+                    string sent_msg = "sent to host: " + ofToString(message->host) + " on port: " + ofToString(message->port) + " message: " + ofToString(message->address);
+                    ofxOscMessage m;
+                    m.setAddress(message->address);
+                    for(auto& arg: message->args)
+                    {
+                        ofxOscArgType t = arg->getType();
+                        switch(t)
+                        {
+                            case OFXOSC_TYPE_INT32:
+                            {
+                                int32_t msg = dynamic_cast<ofxOscArgInt32*>(arg.get())->get();
+                                m.addInt32Arg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_INT64:
+                            {
+                                int64_t msg = dynamic_cast<ofxOscArgInt64*>(arg.get())->get();
+                                m.addInt64Arg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_FLOAT:
+                            {
+                                float msg = dynamic_cast<ofxOscArgFloat*>(arg.get())->get();
+                                m.addFloatArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_DOUBLE:
+                            {
+                                double msg = dynamic_cast<ofxOscArgDouble*>(arg.get())->get();
+                                m.addDoubleArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_TRUE:
+                            case OFXOSC_TYPE_FALSE:
+                            case OFXOSC_TYPE_TRIGGER:
+                            {
+                                bool msg = dynamic_cast<ofxOscArgBool*>(arg.get())->get();
+                                m.addBoolArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_STRING:
+                            {
+                                string msg = dynamic_cast<ofxOscArgString*>(arg.get())->get();
+                                m.addStringArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_CHAR:
+                            {
+                                char msg = dynamic_cast<ofxOscArgChar*>(arg.get())->get();
+                                m.addCharArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_RGBA_COLOR:
+                            {
+                                uint32_t msg = dynamic_cast<ofxOscArgRgbaColor*>(arg.get())->get();
+                                m.addRgbaColorArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_TIMETAG:
+                            {
+                                uint64_t msg = dynamic_cast<ofxOscArgTimetag*>(arg.get())->get();
+                                m.addTimetagArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_MIDI_MESSAGE:
+                            {
+                                uint32_t msg = dynamic_cast<ofxOscArgMidiMessage*>(arg.get())->get();
+                                m.addMidiMessageArg(msg);
+                                sent_msg += " " + ofToString(msg);
+                                break;
+                            }
+                            case OFXOSC_TYPE_BLOB:
+                            {
+                                ofBuffer msg = dynamic_cast<ofxOscArgBlob*>(arg.get())->get();
+                                m.addBlobArg(msg);
+                                sent_msg += " [blob]";
+                                break;
+                            }
+                            default:
+                                ofLogNotice("OscTester") << "unknown arg type.";
+                                break;
+                        }
+                    }
+                    ofxOscSender sender;
+                    sender.setup(message->host, message->port);
+                    
+                    sender.sendMessage(m, bundle);
+                    message->sent_time = ofGetElapsedTimef();
+                    
+                    sent_msg += " on " + ofToString(message->sent_time) + " ms";
+                    logs.push_back(sent_msg);
+                    if(logs.size() > LOG_SIZE)
+                    {
+                        logs.erase(logs.begin());
+                    }
+                }
             }
             if(message->subscribe)
             {
